@@ -2,6 +2,8 @@
 
 A real-time macroeconomic dashboard powered by Claude AI.
 
+![Macro Command Center](preview.png)
+
 ## Setup
 
 1. Install dependencies:
