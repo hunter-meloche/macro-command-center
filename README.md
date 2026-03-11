@@ -9,11 +9,13 @@ A real-time macroeconomic dashboard powered by Claude AI.
    npm install
    ```
 
-2. Copy the example env file and add your Anthropic API key:
-   ```bash
-   cp .env.example .env
+2. Create a `.env` file in the project root with the following:
    ```
-   Then edit `.env` and replace `your_api_key_here` with your key from [console.anthropic.com](https://console.anthropic.com/).
+   VITE_ANTHROPIC_API_KEY=your_anthropic_key_here
+   VITE_FRED_API_KEY=your_fred_key_here
+   ```
+   - **Anthropic key** — get one at [console.anthropic.com](https://console.anthropic.com/). Required for the AI Strategy Analysis button.
+   - **FRED key** — get one free at [fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html). Required for live macro data (PCE, unemployment, yield curve, jobless claims, etc.). Without it the dashboard runs on cached/default values only.
 
 3. Start the dev server:
    ```bash
