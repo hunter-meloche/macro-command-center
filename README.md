@@ -1,6 +1,6 @@
 # Macro Command Center
 
-A real-time macroeconomic dashboard powered by Claude AI.
+A personal macroeconomic command center for tracking Fed policy signals in real time. Aggregates labor market data, inflation indicators, credit stress, and market sentiment into a single weighted prediction engine — so you can anticipate rate decisions before they happen and position your savings, real estate, and investment allocations accordingly.
 
 ![Macro Command Center](preview.png)
 
@@ -24,12 +24,22 @@ A real-time macroeconomic dashboard powered by Claude AI.
    npm run dev
    ```
 
+## How data is fetched
+
+Market data is pulled from two sources on demand via Vite dev-server proxies (to avoid CORS):
+
+- **FRED API** (`api.stlouisfed.org`) — Core PCE, unemployment, yield curve, breakeven inflation, jobless claims, Fed funds rate, 2Y/10Y Treasuries, JOLTS, nonfarm payrolls, avg hourly earnings, consumer inflation expectations, PPI, IG/BBB credit spreads, St. Louis Financial Stress Index, USD/JPY, BOJ rate, Japan 10Y. Requires `VITE_FRED_API_KEY`.
+- **Yahoo Finance** (`query1.finance.yahoo.com`) — Brent crude (`BZ=F`), gold (`GC=F`), silver (`SI=F`), S&P 500 (`^GSPC`), DXY (`DX-Y.NYB`), Gladstone Land (`LAND`), Sun Communities (`SUI`).
+
+Data is fetched in parallel using `Promise.allSettled` so a single failing source doesn't block the rest. Results are cached in `localStorage` and persist across page refreshes until the next sync.
+
 ## Features
 
-- **Live Data Sync** — Uses Claude with web search to fetch current market data (Brent crude, PCE, USD/JPY, gold, mortgage rates, etc.)
-- **AI Strategy Analysis** — Claude generates a macro strategy based on current conditions
-- **Fed Prediction Engine** — Weighted scoring model forecasting Fed policy scenarios
+- **Live Data Sync** — Fetches 27+ data points from FRED and Yahoo Finance on load and on demand
+- **Fed Prediction Engine** — Two-sided weighted scoring model (inflation pressure vs. cut pressure) forecasting Fed policy scenarios; includes a manual political override input
+- **AI Strategy Analysis** — Sends the current macro snapshot to Claude for narrative interpretation and tactical positioning advice
 - **Carry Trade Monitor** — Tracks JPY carry trade unwind risk across 6 sub-metrics
+- **Credit Markets** — IG OAS, BBB spread, and St. Louis FSI as public proxies for private credit stress
 - **Real Estate Intel** — Mortgage rates, AZ land prices, Gladstone Land, Sun Communities
 - **Metals Ratio** — Gold/silver spot prices and ratio
 
@@ -38,4 +48,6 @@ A real-time macroeconomic dashboard powered by Claude AI.
 - React 18 + Vite
 - Tailwind CSS
 - Lucide React icons
-- Claude API (claude-sonnet-4-6) with web search
+- FRED API (St. Louis Fed)
+- Yahoo Finance v8 API
+- Claude API (claude-sonnet-4-6)
