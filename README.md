@@ -24,6 +24,8 @@ A personal macroeconomic command center for tracking Fed policy signals in real 
    npm run dev
    ```
 
+   Open http://localhost:5174
+
 ## How data is fetched
 
 Market data is pulled from two sources on demand via Vite dev-server proxies (to avoid CORS):
