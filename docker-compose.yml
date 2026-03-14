@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8101:5174"
+    restart: always
+    environment:
+      # Set these on the host or in a .env file alongside this docker-compose.yml:
+      #   echo "VITE_ANTHROPIC_API_KEY=sk-ant-..." >> .env
+      #   echo "VITE_FRED_API_KEY=..." >> .env
+      - VITE_ANTHROPIC_API_KEY=${VITE_ANTHROPIC_API_KEY:-}
+      - VITE_FRED_API_KEY=${VITE_FRED_API_KEY:-}
