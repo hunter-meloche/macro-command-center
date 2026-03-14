@@ -53,3 +53,5 @@ Data is fetched in parallel using `Promise.allSettled` so a single failing sourc
 - FRED API (St. Louis Fed)
 - Yahoo Finance v8 API
 - Claude API (claude-sonnet-4-6)
+
+> **Disclaimer:** See [DISCLAIMER.md](./DISCLAIMER.md) for legal notices.
