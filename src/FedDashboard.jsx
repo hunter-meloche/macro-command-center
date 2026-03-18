@@ -144,7 +144,18 @@ const SCENARIOS = {
 
 // --- Free Market Data (Yahoo Finance + FRED) ---
 
-const fetchYahooChart = async (symbol) => {
+const withRetry = async (fn, retries = 3, delayMs = 800) => {
+  let lastErr;
+  for (let i = 0; i < retries; i++) {
+    try { return await fn(); } catch (e) {
+      lastErr = e;
+      if (i < retries - 1) await new Promise(r => setTimeout(r, delayMs * (i + 1)));
+    }
+  }
+  throw lastErr;
+};
+
+const fetchYahooChart = (symbol) => withRetry(async () => {
   const res = await fetch(`${API_BASE}/api/yahoo/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`);
   if (!res.ok) throw new Error(`Yahoo ${symbol}: ${res.status}`);
   const data = await res.json();
@@ -157,31 +168,35 @@ const fetchYahooChart = async (symbol) => {
     prev: allCloses[Math.max(0, allCloses.length - 22)],
     allCloses,
   };
-};
+});
 
-const fetchFredObs = async (seriesId, units = null) => {
-  if (!FRED_API_KEY) return null;
+const fetchFredObs = (seriesId, units = null) => {
+  if (!FRED_API_KEY) return Promise.resolve(null);
   const unitsParam = units ? `&units=${units}` : '';
-  const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=3&sort_order=desc&file_type=json${unitsParam}`);
-  if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
-  const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
-  return { current: parseFloat(obs[0]?.value) || null, prev: parseFloat(obs[1]?.value) || null };
+  return withRetry(async () => {
+    const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=3&sort_order=desc&file_type=json${unitsParam}`);
+    if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
+    const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
+    return { current: parseFloat(obs[0]?.value) || null, prev: parseFloat(obs[1]?.value) || null };
+  });
 };
 
 // Fetches a longer history from FRED (for momentum and vol calculations).
 // Returns same shape as fetchYahooChart: { current, prev (≈22 days back), allCloses }.
-const fetchFredHistory = async (seriesId, limit = 30) => {
-  if (!FRED_API_KEY) return null;
-  const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=${limit}&sort_order=desc&file_type=json`);
-  if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
-  const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
-  const allCloses = obs.map(o => parseFloat(o.value)).filter(v => !isNaN(v)).reverse();
-  if (allCloses.length < 2) throw new Error(`Insufficient FRED data: ${seriesId}`);
-  return {
-    current: allCloses[allCloses.length - 1],
-    prev: allCloses[Math.max(0, allCloses.length - 22)],
-    allCloses,
-  };
+const fetchFredHistory = (seriesId, limit = 30) => {
+  if (!FRED_API_KEY) return Promise.resolve(null);
+  return withRetry(async () => {
+    const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=${limit}&sort_order=desc&file_type=json`);
+    if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
+    const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
+    const allCloses = obs.map(o => parseFloat(o.value)).filter(v => !isNaN(v)).reverse();
+    if (allCloses.length < 2) throw new Error(`Insufficient FRED data: ${seriesId}`);
+    return {
+      current: allCloses[allCloses.length - 1],
+      prev: allCloses[Math.max(0, allCloses.length - 22)],
+      allCloses,
+    };
+  });
 };
 
 const fetchLiveMacroData = async () => {
@@ -212,7 +227,7 @@ const fetchLiveMacroData = async () => {
     fetchFredObs('T10YIE'),
     fetchFredHistory('ICSA', 10),
     fetchFredObs('DFEDTARU'),
-    fetchYahooChart('DX-Y.NYB'),
+    fetchYahooChart('DX=F'),
     fetchFredObs('JTSJOL'),
     fetchFredHistory('PAYEMS', 3),
     fetchFredObs('AHETPI', 'pc1'),
@@ -225,28 +240,31 @@ const fetchLiveMacroData = async () => {
 
   const ok = (r) => r.status === 'fulfilled' ? r.value : null;
   const out = {};
+  const failures = [];
 
-  const setPair = (r, key, prevKey) => {
+  const setPair = (r, key, prevKey, label) => {
     const d = ok(r);
     if (d?.current != null) {
       out[key] = round(d.current);
       if (d.prev != null) out[prevKey] = round(d.prev);
+    } else {
+      failures.push(label);
     }
   };
 
-  setPair(brentRes,  'brentCrude',          'brentCrudePrev');
-  setPair(goldRes,   'goldSpot',             'goldSpotPrev');
-  setPair(silverRes, 'silverSpot',           'silverSpotPrev');
-  setPair(landRes,   'gladstonePrice',       'gladstonePricePrev');
-  setPair(suiRes,    'sunCommunitiesPrice',  'sunCommunitiesPricePrev');
-  setPair(corePCERes,      'corePCE',       'corePCEPrev');
-  setPair(unemploymentRes, 'unemployment',  'unemploymentPrev');
-  setPair(mortgageRes,     'mortgage30Y',   'mortgage30YPrev');
+  setPair(brentRes,        'brentCrude',          'brentCrudePrev',         'Brent Crude (FRED)');
+  setPair(goldRes,         'goldSpot',             'goldSpotPrev',            'Gold (Yahoo)');
+  setPair(silverRes,       'silverSpot',           'silverSpotPrev',          'Silver (Yahoo)');
+  setPair(landRes,         'gladstonePrice',       'gladstonePricePrev',      'Gladstone/LAND (Yahoo)');
+  setPair(suiRes,          'sunCommunitiesPrice',  'sunCommunitiesPricePrev', 'Sun Communities/SUI (Yahoo)');
+  setPair(corePCERes,      'corePCE',              'corePCEPrev',             'Core PCE (FRED)');
+  setPair(unemploymentRes, 'unemployment',         'unemploymentPrev',        'Unemployment (FRED)');
+  setPair(mortgageRes,     'mortgage30Y',          'mortgage30YPrev',         'Mortgage 30Y (FRED)');
 
-  const vixD = ok(vixRes);   if (vixD?.current  != null) out.vixIndex = round(vixD.current);
-  const spD  = ok(sp500Res); if (spD?.current   != null) out.sp500    = round(spD.current);
-  const bojD = ok(bojRes);   if (bojD?.current  != null) out.bojRate  = bojD.current;
-  const tedD = ok(tedRes);   if (tedD?.current  != null) out.tedSpread = round(tedD.current);
+  const vixD = ok(vixRes);   if (vixD?.current  != null) out.vixIndex  = round(vixD.current);  else failures.push('VIX (FRED)');
+  const spD  = ok(sp500Res); if (spD?.current   != null) out.sp500     = round(spD.current);   else failures.push('S&P 500 (Yahoo)');
+  const bojD = ok(bojRes);   if (bojD?.current  != null) out.bojRate   = bojD.current;          else failures.push('BoJ Rate (FRED)');
+  const tedD = ok(tedRes);   if (tedD?.current  != null) out.tedSpread = round(tedD.current);   else failures.push('HY Credit Spread (FRED)');
 
   const usdJpyD = ok(usdJpyRes);
   if (usdJpyD?.current != null) {
@@ -255,35 +273,42 @@ const fetchLiveMacroData = async () => {
       out.usdJpy1MChange = round((usdJpyD.current - usdJpyD.prev) / usdJpyD.prev * 100);
     const vol = calcRealizedVol(usdJpyD.allCloses);
     if (vol != null) out.jpyRealizedVol = vol;
+  } else {
+    failures.push('USD/JPY (FRED)');
   }
 
   const us10y = ok(us10yRes)?.current;
   const jp10y = ok(jp10yRes)?.current;
   if (us10y != null && jp10y != null) out.usJapanSpread = round(us10y - jp10y);
+  else failures.push('US-Japan Rate Spread (FRED)');
 
   const us2yD = ok(us2yRes);
-  if (us2yD?.current != null) { out.us2y = round(us2yD.current); if (us2yD.prev != null) out.us2yPrev = round(us2yD.prev); }
+  if (us2yD?.current != null) { out.us2y = round(us2yD.current); if (us2yD.prev != null) out.us2yPrev = round(us2yD.prev); } else failures.push('US 2Y Yield (FRED)');
   const ycD = ok(yieldCurveRes);
-  if (ycD?.current != null) { out.yieldCurve = round(ycD.current); if (ycD.prev != null) out.yieldCurvePrev = round(ycD.prev); }
+  if (ycD?.current != null) { out.yieldCurve = round(ycD.current); if (ycD.prev != null) out.yieldCurvePrev = round(ycD.prev); } else failures.push('Yield Curve T10Y2Y (FRED)');
   const bkD = ok(breakevenRes);
-  if (bkD?.current != null) { out.breakeven10Y = round(bkD.current); if (bkD.prev != null) out.breakeven10YPrev = round(bkD.prev); }
+  if (bkD?.current != null) { out.breakeven10Y = round(bkD.current); if (bkD.prev != null) out.breakeven10YPrev = round(bkD.prev); } else failures.push('10Y Breakeven Inflation (FRED)');
   const ffD = ok(fedFundsRes);
-  if (ffD?.current != null) { out.fedFundsRate = round(ffD.current); if (ffD.prev != null) out.fedFundsRatePrev = round(ffD.prev); }
+  if (ffD?.current != null) { out.fedFundsRate = round(ffD.current); if (ffD.prev != null) out.fedFundsRatePrev = round(ffD.prev); } else failures.push('Fed Funds Rate (FRED)');
   // Jobless claims: 4-week moving average reduces weekly noise. Score uses avg; prev shows prior 4wk avg.
   const jcD = ok(joblessRes);
   if (jcD?.allCloses?.length >= 4) {
     const avg4 = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length / 1000);
     out.joblessClaims = avg4(jcD.allCloses.slice(-4));
     if (jcD.allCloses.length >= 8) out.joblessClaimsPrev = avg4(jcD.allCloses.slice(-8, -4));
+  } else {
+    failures.push('Jobless Claims (FRED)');
   }
-  const dxyD     = ok(dxyRes);
-  if (dxyD?.current != null) { out.dxy = round(dxyD.current, 1); if (dxyD.prev != null) out.dxyPrev = round(dxyD.prev, 1); }
+  const dxyD = ok(dxyRes);
+  if (dxyD?.current != null) { out.dxy = round(dxyD.current, 1); if (dxyD.prev != null) out.dxyPrev = round(dxyD.prev, 1); } else failures.push('DXY Dollar Index (Yahoo)');
 
   // JOLTS Job Openings: level in thousands → store as millions for display/formula.
   const joltsD = ok(joltsRes);
   if (joltsD?.current != null) {
     out.jolts = round(joltsD.current / 1000, 1);
     if (joltsD.prev != null) out.joltsPrev = round(joltsD.prev / 1000, 1);
+  } else {
+    failures.push('JOLTS Job Openings (FRED)');
   }
 
   // Nonfarm Payrolls: level series → compute MoM change in thousands (e.g. 175 = 175k jobs).
@@ -292,29 +317,31 @@ const fetchLiveMacroData = async () => {
     const c = payemsD.allCloses;
     out.nfp = Math.round(c[c.length - 1] - c[c.length - 2]);
     if (c.length >= 3) out.nfpPrev = Math.round(c[c.length - 2] - c[c.length - 3]);
+  } else {
+    failures.push('Nonfarm Payrolls (FRED)');
   }
 
   // Average Hourly Earnings YoY %: pc1 transformation applied by FRED.
   const aheD = ok(aheRes);
-  if (aheD?.current != null) { out.wageGrowth = round(aheD.current); if (aheD.prev != null) out.wageGrowthPrev = round(aheD.prev); }
+  if (aheD?.current != null) { out.wageGrowth = round(aheD.current); if (aheD.prev != null) out.wageGrowthPrev = round(aheD.prev); } else failures.push('Wage Growth AHE (FRED)');
 
   // U of Michigan 1-year consumer inflation expectations.
   const michD = ok(michRes);
-  if (michD?.current != null) { out.consumerInflExp = round(michD.current); if (michD.prev != null) out.consumerInflExpPrev = round(michD.prev); }
+  if (michD?.current != null) { out.consumerInflExp = round(michD.current); if (michD.prev != null) out.consumerInflExpPrev = round(michD.prev); } else failures.push('Consumer Inflation Expectations (FRED)');
 
   // PPI All Commodities YoY %: pc1 transformation applied by FRED.
   const ppiD = ok(ppiRes);
-  if (ppiD?.current != null) { out.ppiYoy = round(ppiD.current); if (ppiD.prev != null) out.ppiYoyPrev = round(ppiD.prev); }
+  if (ppiD?.current != null) { out.ppiYoy = round(ppiD.current); if (ppiD.prev != null) out.ppiYoyPrev = round(ppiD.prev); } else failures.push('PPI YoY (FRED)');
 
   // Credit market stress proxies — best available public signals for private credit health.
   const igD = ok(igSpreadRes);
-  if (igD?.current != null) { out.igSpread = round(igD.current); if (igD.prev != null) out.igSpreadPrev = round(igD.prev); }
+  if (igD?.current != null) { out.igSpread = round(igD.current); if (igD.prev != null) out.igSpreadPrev = round(igD.prev); } else failures.push('IG Credit Spread (FRED)');
   const bbbD = ok(bbbSpreadRes);
-  if (bbbD?.current != null) { out.bbbSpread = round(bbbD.current); if (bbbD.prev != null) out.bbbSpreadPrev = round(bbbD.prev); }
+  if (bbbD?.current != null) { out.bbbSpread = round(bbbD.current); if (bbbD.prev != null) out.bbbSpreadPrev = round(bbbD.prev); } else failures.push('BBB Credit Spread (FRED)');
   const fsiD = ok(fsiRes);
-  if (fsiD?.current != null) { out.financialStressIdx = round(fsiD.current); if (fsiD.prev != null) out.financialStressIdxPrev = round(fsiD.prev); }
+  if (fsiD?.current != null) { out.financialStressIdx = round(fsiD.current); if (fsiD.prev != null) out.financialStressIdxPrev = round(fsiD.prev); } else failures.push('Financial Stress Index (FRED)');
 
-  return out;
+  return { data: out, failures };
 };
 
 const callClaudeAnalysis = async (prompt, systemInstruction = "") => {
@@ -481,25 +508,30 @@ export default function App() {
   const [analysis, setAnalysis] = useState("");
   const [loading, setLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; } });
   const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleTimeString());
   const [activeModal, setActiveModal] = useState(null);
   const [showFormula, setShowFormula] = useState(false);
   const [showCarryFormula, setShowCarryFormula] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [trumpCutBias, setTrumpCutBias] = useState(25);
+  const [syncFailures, setSyncFailures] = useState([]);
+  const [trumpCutBias, setTrumpCutBias] = useState(15);
 
   const syncLiveData = async () => {
     setDataLoading(true);
     setErrorMsg("");
+    setSyncFailures([]);
     try {
-      const live = await fetchLiveMacroData();
+      const { data: live, failures } = await fetchLiveMacroData();
       if (Object.keys(live).length > 0) {
         setMarketData(prev => {
           const next = { ...prev, ...live };
           try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
           return next;
         });
+        setDataLoaded(true);
         setLastUpdated(new Date().toLocaleTimeString());
+        if (failures.length > 0) setSyncFailures(failures);
       } else {
         setErrorMsg("No data returned. Add VITE_FRED_API_KEY to .env for macro data.");
       }
@@ -695,6 +727,19 @@ export default function App() {
               </button>
             </div>
             {errorMsg && <div className="text-rose-500 text-xs mt-2 font-bold flex items-center"><AlertTriangle size={12} className="mr-1"/> {String(errorMsg)}</div>}
+            {!dataLoaded && !dataLoading && <div className="text-amber-400 text-xs mt-2 font-bold flex items-center"><AlertTriangle size={12} className="mr-1"/> PLACEHOLDER DATA — values below are estimates, not live market data</div>}
+            {syncFailures.length > 0 && (
+              <div className="mt-3 p-3 bg-rose-950/60 border border-rose-600/60 rounded-lg">
+                <div className="text-rose-400 text-xs font-black uppercase tracking-widest mb-2 flex items-center">
+                  <AlertTriangle size={13} className="mr-1.5"/> {syncFailures.length} source{syncFailures.length > 1 ? 's' : ''} failed — showing last known values:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {syncFailures.map(f => (
+                    <span key={f} className="bg-rose-900/70 border border-rose-700/50 text-rose-300 text-[10px] font-mono font-bold px-2 py-0.5 rounded">{f}</span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="mt-4 md:mt-0 text-right">
             <div className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">Fed Funds Target</div>
