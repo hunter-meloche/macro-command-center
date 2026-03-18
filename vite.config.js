@@ -35,6 +35,7 @@ function dashboardApiPlugin() {
 }
 
 export default defineConfig({
+  base: '/finance/macro/',
   plugins: [react(), dashboardApiPlugin()],
   server: {
     port: 5174,

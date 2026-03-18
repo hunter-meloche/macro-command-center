@@ -74,6 +74,7 @@ const DATA_SOURCES = {
 
 const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
 const FRED_API_KEY = import.meta.env.VITE_FRED_API_KEY;
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
 
 // --- Status Helpers (Defined here to fix ReferenceError) ---
 
@@ -144,7 +145,7 @@ const SCENARIOS = {
 // --- Free Market Data (Yahoo Finance + FRED) ---
 
 const fetchYahooChart = async (symbol) => {
-  const res = await fetch(`/api/yahoo/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`);
+  const res = await fetch(`${API_BASE}/api/yahoo/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`);
   if (!res.ok) throw new Error(`Yahoo ${symbol}: ${res.status}`);
   const data = await res.json();
   const result = data?.chart?.result?.[0];
@@ -161,7 +162,7 @@ const fetchYahooChart = async (symbol) => {
 const fetchFredObs = async (seriesId, units = null) => {
   if (!FRED_API_KEY) return null;
   const unitsParam = units ? `&units=${units}` : '';
-  const res = await fetch(`/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=3&sort_order=desc&file_type=json${unitsParam}`);
+  const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=3&sort_order=desc&file_type=json${unitsParam}`);
   if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
   const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
   return { current: parseFloat(obs[0]?.value) || null, prev: parseFloat(obs[1]?.value) || null };
@@ -171,7 +172,7 @@ const fetchFredObs = async (seriesId, units = null) => {
 // Returns same shape as fetchYahooChart: { current, prev (≈22 days back), allCloses }.
 const fetchFredHistory = async (seriesId, limit = 30) => {
   if (!FRED_API_KEY) return null;
-  const res = await fetch(`/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=${limit}&sort_order=desc&file_type=json`);
+  const res = await fetch(`${API_BASE}/api/fred/fred/series/observations?series_id=${seriesId}&api_key=${FRED_API_KEY}&limit=${limit}&sort_order=desc&file_type=json`);
   if (!res.ok) throw new Error(`FRED ${seriesId}: ${res.status}`);
   const obs = (await res.json())?.observations?.filter(o => o.value !== '.') || [];
   const allCloses = obs.map(o => parseFloat(o.value)).filter(v => !isNaN(v)).reverse();
@@ -327,7 +328,7 @@ const callClaudeAnalysis = async (prompt, systemInstruction = "") => {
       };
       if (systemInstruction) body.system = systemInstruction;
 
-      const response = await fetch('/api/anthropic/v1/messages', {
+      const response = await fetch(`${API_BASE}/api/anthropic/v1/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
